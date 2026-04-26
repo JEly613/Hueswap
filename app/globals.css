@@ -1,8 +1,18 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #fafaf9;
+  --foreground: #1c1917;
+  --surface: #ffffff;
+  --surface-hover: #f5f5f4;
+  --border: #e7e5e4;
+  --border-strong: #d6d3d1;
+  --accent: #0d9488;
+  --accent-hover: #0f766e;
+  --accent-soft: #ccfbf1;
+  --muted: #78716c;
+  --danger: #dc2626;
+  --danger-soft: #fef2f2;
 }
 
 @theme inline {
@@ -13,14 +23,44 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  :root:not(.dark) {
+    /* Only apply if no explicit class is set — handled by JS */
   }
+}
+
+.dark {
+  --background: #0c0a09;
+  --foreground: #fafaf9;
+  --surface: #1c1917;
+  --surface-hover: #292524;
+  --border: #292524;
+  --border-strong: #44403c;
+  --accent: #2dd4bf;
+  --accent-hover: #14b8a6;
+  --accent-soft: #042f2e;
+  --muted: #a8a29e;
+  --danger: #f87171;
+  --danger-soft: #1c1917;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+}
+
+/* Smooth transitions for interactive elements */
+* {
+  transition-property: background-color, border-color, box-shadow, opacity;
+  transition-duration: 150ms;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Upload zone dashed border animation */
+@keyframes dash-march {
+  to { stroke-dashoffset: -12; }
+}
+
+.dash-animated {
+  animation: dash-march 0.6s linear infinite;
 }

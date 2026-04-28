@@ -34,21 +34,24 @@ describe("full pipeline — simple-icon.svg", () => {
     // Colors extracted
     expect(colors.length).toBeGreaterThanOrEqual(3);
 
-    // Families formed
-    expect(clusterResult.families.length).toBeGreaterThanOrEqual(3);
-
-    // All source colors mapped
+    // All source colors have a mapping (chromatic → remapped, achromatic → self)
     for (const color of colors) {
       expect(mappingResult.fullColorMap.has(color.hex)).toBe(true);
     }
 
-    // Recolored SVG contains target palette colors
+    // Recolored SVG contains new colors
     const recoloredColors = extractColors(recoloredSvg);
     expect(recoloredColors.length).toBeGreaterThan(0);
 
-    // Original colors should be gone
+    // Chromatic original colors should be remapped (not present as-is)
+    // Achromatic colors stay unchanged
+    const achromaticHexes = new Set(
+      clusterResult.achromaticColors.map((c) => c.hex)
+    );
     for (const color of colors) {
-      expect(recoloredSvg).not.toContain(color.hex);
+      if (!achromaticHexes.has(color.hex)) {
+        expect(recoloredSvg).not.toContain(color.hex);
+      }
     }
   });
 

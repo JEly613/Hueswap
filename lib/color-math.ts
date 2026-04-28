@@ -155,6 +155,20 @@ export function normalizeColor(
   };
 }
 
+// ─── Achromatic Detection ────────────────────────────────────────────────────
+
+/** Chroma threshold below which a color is considered achromatic (black, white, grey) */
+export const ACHROMATIC_THRESHOLD = 0.05;
+
+/**
+ * Detect whether a color is achromatic (black, white, or grey).
+ * Achromatic colors have very low chroma — they carry no meaningful hue
+ * and should not participate in palette-based color mapping.
+ */
+export function isAchromatic(color: OklchColor): boolean {
+  return color.c < ACHROMATIC_THRESHOLD;
+}
+
 // ─── Warm/Cool Classification ────────────────────────────────────────────────
 
 /**

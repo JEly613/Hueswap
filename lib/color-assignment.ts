@@ -11,6 +11,7 @@ import {
   computeOffset,
   applyOffset,
   oklchToHex,
+  isAchromatic,
 } from "./color-math";
 import type {
   OklchColor,
@@ -36,8 +37,10 @@ export interface ColorFamily {
 }
 
 export interface ClusteringResult {
-  /** Color families found in the SVG */
+  /** Color families found in the SVG (chromatic colors only) */
   families: ColorFamily[];
+  /** Achromatic colors (black, white, grey) excluded from mapping */
+  achromaticColors: ExtractedColor[];
   /** Normalized palette info for the SVG's color space */
   normalizedPalette: NormalizedPalette;
   /** Warning if families exceed target palette size */
@@ -91,26 +94,47 @@ export function clusterColors(
   if (colors.length === 0) {
     return {
       families: [],
+      achromaticColors: [],
       normalizedPalette: { minL: 0, maxL: 1, minC: 0, maxC: 0.4 },
       warning: null,
     };
   }
 
-  // Convert all to OKLCH
-  const oklchColors = colors.map((c) => ({
+  // Convert all to OKLCH and separate achromatic from chromatic
+  const allOklch = colors.map((c) => ({
     extracted: c,
     oklch: hexToOklch(c.hex),
   }));
 
-  // Sort by area descending — dominant colors first
-  oklchColors.sort((a, b) => b.extracted.area - a.extracted.area);
+  const achromaticColors: ExtractedColor[] = [];
+  const chromaticColors: { extracted: ExtractedColor; oklch: OklchColor }[] = [];
 
-  // Greedy clustering
+  for (const color of allOklch) {
+    if (isAchromatic(color.oklch)) {
+      achromaticColors.push(color.extracted);
+    } else {
+      chromaticColors.push(color);
+    }
+  }
+
+  if (chromaticColors.length === 0) {
+    return {
+      families: [],
+      achromaticColors,
+      normalizedPalette: { minL: 0, maxL: 1, minC: 0, maxC: 0.4 },
+      warning: null,
+    };
+  }
+
+  // Sort chromatic colors by area descending — dominant colors become bases
+  chromaticColors.sort((a, b) => b.extracted.area - a.extracted.area);
+
+  // Greedy clustering (chromatic colors only)
   const clusters: {
     members: { extracted: ExtractedColor; oklch: OklchColor }[];
   }[] = [];
 
-  for (const color of oklchColors) {
+  for (const color of chromaticColors) {
     let assigned = false;
 
     for (const cluster of clusters) {
@@ -165,7 +189,7 @@ export function clusterColors(
       ? `Design has ${families.length} color families but target palette only has ${targetPaletteSize} colors. Some families will share a palette color.`
       : null;
 
-  return { families, normalizedPalette, warning };
+  return { families, achromaticColors, normalizedPalette, warning };
 }
 
 // ─── Naive Mapping (v1 — before ML) ─────────────────────────────────────────
@@ -199,11 +223,17 @@ export function naiveMapping(
   clusterResult: ClusteringResult,
   targetPaletteHexes: string[]
 ): MappingResult {
-  const { families, normalizedPalette: srcPalette } = clusterResult;
+  const { families, achromaticColors } = clusterResult;
   const warnings: string[] = [];
 
   if (clusterResult.warning) {
     warnings.push(clusterResult.warning);
+  }
+
+  // Achromatic colors pass through unchanged — they keep their original hex
+  const fullColorMap = new Map<string, string>();
+  for (const ac of achromaticColors) {
+    fullColorMap.set(ac.hex, ac.hex);
   }
 
   // Convert target palette to OKLCH and compute feature vectors
@@ -217,7 +247,6 @@ export function naiveMapping(
   const assignedTargets = new Set<number>();
 
   const mappings: ColorMapping[] = [];
-  const fullColorMap = new Map<string, string>();
 
   // Sort families by area (most dominant first) for priority assignment
   const sortedFamilies = [...families].sort(

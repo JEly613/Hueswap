@@ -24,6 +24,23 @@ export interface ColorUsage {
   attribute: "fill" | "stroke" | "style-fill" | "style-stroke" | "stop-color";
   area: number;
   depth: number;
+  /** If this color is a gradient stop, the gradient ID and stop index */
+  gradientInfo?: {
+    gradientId: string;
+    gradientType: "linearGradient" | "radialGradient";
+    stopIndex: number;
+    offset: string;
+  };
+}
+
+/** Extracted gradient with its ordered stop colors */
+export interface ExtractedGradient {
+  id: string;
+  type: "linearGradient" | "radialGradient";
+  stops: {
+    offset: number;
+    hex: string;
+  }[];
 }
 
 export interface ParsedSvg {
@@ -31,6 +48,8 @@ export interface ParsedSvg {
   node: INode;
   /** All unique colors extracted with structural metadata */
   colors: ExtractedColor[];
+  /** Gradients found in the SVG with their ordered stops */
+  gradients: ExtractedGradient[];
   /** Raw SVG string for re-serialization */
   raw: string;
 }
@@ -207,10 +226,94 @@ function estimatePolygonArea(points: string): number {
 
 // ─── Tree Walking ────────────────────────────────────────────────────────────
 
+/** Gradient tag names we explicitly handle */
+const GRADIENT_TAGS = new Set(["linearGradient", "radialGradient"]);
+
+/**
+ * Parse a stop offset value to a number in [0, 1].
+ * Handles "50%", "0.5", or missing values.
+ */
+function parseOffset(offset: string | undefined): number {
+  if (!offset) return 0;
+  const trimmed = offset.trim();
+  if (trimmed.endsWith("%")) {
+    return parseFloat(trimmed) / 100;
+  }
+  return parseFloat(trimmed) || 0;
+}
+
+/**
+ * Extract gradient stop colors from a <linearGradient> or <radialGradient> node.
+ * Returns the gradient info and also pushes color usages for each stop.
+ */
+function extractGradientStops(
+  node: INode,
+  depth: number,
+  usages: ColorUsage[],
+  gradients: ExtractedGradient[]
+): void {
+  const gradientId = node.attributes.id || "";
+  const gradientType = node.name as "linearGradient" | "radialGradient";
+  const stops: ExtractedGradient["stops"] = [];
+
+  for (let i = 0; i < node.children.length; i++) {
+    const child = node.children[i];
+    if (child.name !== "stop") continue;
+
+    let hex: string | null = null;
+
+    // Check stop-color attribute
+    if (child.attributes["stop-color"]) {
+      hex = normalizeHex(child.attributes["stop-color"]);
+    }
+
+    // Check inline style for stop-color (overrides attribute)
+    if (child.attributes.style) {
+      const { stopColor } = extractColorsFromStyle(child.attributes.style);
+      if (stopColor) hex = stopColor;
+    }
+
+    if (hex) {
+      const offset = parseOffset(child.attributes.offset);
+
+      usages.push({
+        hex,
+        element: "stop",
+        attribute: "stop-color",
+        area: 10, // Gradient stops get a default area
+        depth: depth + 1,
+        gradientInfo: {
+          gradientId,
+          gradientType,
+          stopIndex: i,
+          offset: child.attributes.offset || "0%",
+        },
+      });
+
+      stops.push({ offset, hex });
+    }
+  }
+
+  if (stops.length > 0) {
+    gradients.push({ id: gradientId, type: gradientType, stops });
+  }
+}
+
 /**
  * Recursively walk the SVG node tree and collect color usages.
  */
-function walkNode(node: INode, depth: number, usages: ColorUsage[]): void {
+function walkNode(
+  node: INode,
+  depth: number,
+  usages: ColorUsage[],
+  gradients: ExtractedGradient[]
+): void {
+  // Explicitly handle gradient elements
+  if (GRADIENT_TAGS.has(node.name)) {
+    extractGradientStops(node, depth, usages, gradients);
+    return; // Don't recurse further — stops are handled above
+  }
+
   const area = estimateArea(node);
 
   // Check fill attribute
@@ -241,7 +344,7 @@ function walkNode(node: INode, depth: number, usages: ColorUsage[]): void {
     }
   }
 
-  // Check stop-color attribute (gradient stops)
+  // Check stop-color attribute (for stops outside gradient context, e.g. nested)
   if (node.attributes["stop-color"]) {
     const hex = normalizeHex(node.attributes["stop-color"]);
     if (hex) {
@@ -291,7 +394,7 @@ function walkNode(node: INode, depth: number, usages: ColorUsage[]): void {
 
   // Recurse into children (handles <defs>, <g>, etc.)
   for (const child of node.children) {
-    walkNode(child, depth + 1, usages);
+    walkNode(child, depth + 1, usages, gradients);
   }
 }
 
@@ -354,14 +457,16 @@ function aggregateUsages(usages: ColorUsage[]): ExtractedColor[] {
 export function parseSvg(svgString: string): ParsedSvg {
   const node = parseSync(svgString);
   const usages: ColorUsage[] = [];
+  const gradients: ExtractedGradient[] = [];
 
-  walkNode(node, 0, usages);
+  walkNode(node, 0, usages, gradients);
 
   const colors = aggregateUsages(usages);
 
   return {
     node,
     colors,
+    gradients,
     raw: svgString,
   };
 }

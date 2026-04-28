@@ -1,5 +1,6 @@
 // lib/svg-rewriter.ts — Apply color remapping to SVG XML tree
 // Handles fill/stroke attributes, inline styles, stop-color, and <defs>
+// Includes gradient-aware pass to preserve stop lightness ordering
 
 import { parseSync, stringify, type INode } from "svgson";
 
@@ -150,6 +151,138 @@ function rewriteNode(node: INode, colorMap: ColorMap): void {
   }
 }
 
+// ─── Gradient Lightness Ordering ─────────────────────────────────────────────
+
+/** Gradient tag names */
+const GRADIENT_TAGS = new Set(["linearGradient", "radialGradient"]);
+
+/**
+ * Get the resolved stop-color hex from a <stop> node.
+ * Checks inline style first (takes precedence), then stop-color attribute.
+ */
+function getStopColor(stopNode: INode): string | null {
+  if (stopNode.attributes.style) {
+    const match = stopNode.attributes.style.match(
+      /(?:^|;)\s*stop-color\s*:\s*([^;]+)/i
+    );
+    if (match) {
+      return normalizeHex(match[1]);
+    }
+  }
+  if (stopNode.attributes["stop-color"]) {
+    return normalizeHex(stopNode.attributes["stop-color"]);
+  }
+  return null;
+}
+
+/**
+ * Set the stop-color on a <stop> node.
+ * Updates the attribute or inline style depending on where it was originally defined.
+ */
+function setStopColor(stopNode: INode, hex: string): void {
+  if (
+    stopNode.attributes.style &&
+    /stop-color/i.test(stopNode.attributes.style)
+  ) {
+    stopNode.attributes.style = stopNode.attributes.style.replace(
+      /(stop-color\s*:\s*)([^;]+)/i,
+      `$1${hex}`
+    );
+  } else {
+    stopNode.attributes["stop-color"] = hex;
+  }
+}
+
+interface GradientSnapshot {
+  node: INode;
+  /** Lightness direction: positive = ascending (dark→light), negative = descending (light→dark) */
+  direction: number;
+}
+
+/**
+ * Walk the tree and snapshot the lightness direction of every gradient
+ * BEFORE rewriting colors. Returns a list of gradient nodes with their
+ * original lightness direction.
+ */
+function snapshotGradientDirections(node: INode): GradientSnapshot[] {
+  const snapshots: GradientSnapshot[] = [];
+
+  function walk(n: INode): void {
+    if (GRADIENT_TAGS.has(n.name)) {
+      const stopNodes = n.children.filter((c) => c.name === "stop");
+      if (stopNodes.length >= 2) {
+        const firstHex = getStopColor(stopNodes[0]);
+        const lastHex = getStopColor(stopNodes[stopNodes.length - 1]);
+        if (firstHex && lastHex) {
+          const firstL = hexToOklchLocal(firstHex);
+          const lastL = hexToOklchLocal(lastHex);
+          if (firstL !== null && lastL !== null) {
+            const direction = lastL - firstL;
+            if (Math.abs(direction) >= 0.02) {
+              snapshots.push({ node: n, direction });
+            }
+          }
+        }
+      }
+      return; // don't recurse into gradient children
+    }
+    for (const child of n.children) {
+      walk(child);
+    }
+  }
+
+  walk(node);
+  return snapshots;
+}
+
+/** Lightweight hex→lightness without importing full color-math at module level */
+function hexToOklchLocal(hex: string): number | null {
+  try {
+    const { parse: parseCulori, oklch: toOklch } = require("culori");
+    const parsed = parseCulori(hex);
+    if (!parsed) return null;
+    const result = toOklch(parsed);
+    return result?.l ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * After rewriting, check each snapshotted gradient and correct any
+ * lightness direction inversions by swapping stop colors.
+ */
+function correctGradientDirections(snapshots: GradientSnapshot[]): void {
+  for (const { node, direction } of snapshots) {
+    const stopNodes = node.children.filter((c) => c.name === "stop");
+    if (stopNodes.length < 2) continue;
+
+    const firstHex = getStopColor(stopNodes[0]);
+    const lastHex = getStopColor(stopNodes[stopNodes.length - 1]);
+    if (!firstHex || !lastHex) continue;
+
+    const firstL = hexToOklchLocal(firstHex);
+    const lastL = hexToOklchLocal(lastHex);
+    if (firstL === null || lastL === null) continue;
+
+    const newDirection = lastL - firstL;
+
+    // Check if direction flipped (signs differ and both are significant)
+    const flipped =
+      (direction > 0 && newDirection < -0.02) ||
+      (direction < 0 && newDirection > 0.02);
+
+    if (flipped) {
+      // Reverse the stop colors (not positions/offsets)
+      const hexValues = stopNodes.map((s) => getStopColor(s)!);
+      const reversed = [...hexValues].reverse();
+      for (let i = 0; i < stopNodes.length; i++) {
+        setStopColor(stopNodes[i], reversed[i]);
+      }
+    }
+  }
+}
+
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 /**
@@ -167,7 +300,9 @@ function rewriteNode(node: INode, colorMap: ColorMap): void {
  */
 export function recolorSvg(svgString: string, colorMap: ColorMap): string {
   const node = parseSync(svgString);
+  const gradientSnapshots = snapshotGradientDirections(node);
   rewriteNode(node, colorMap);
+  correctGradientDirections(gradientSnapshots);
   return stringify(node);
 }
 
@@ -180,6 +315,8 @@ export function recolorSvg(svgString: string, colorMap: ColorMap): string {
  * clone it first or re-parse from the raw string.
  */
 export function recolorNode(node: INode, colorMap: ColorMap): string {
+  const gradientSnapshots = snapshotGradientDirections(node);
   rewriteNode(node, colorMap);
+  correctGradientDirections(gradientSnapshots);
   return stringify(node);
 }

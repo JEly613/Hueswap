@@ -20,10 +20,14 @@ from hypothesis import strategies as st
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from ml.generate_pairs import (
+    average_hue_match_distance,
     average_match_distance,
+    circular_hue_distance,
     generate_pairs,
     generate_pairs_for_split,
+    hue_preserving_distance,
     match_colors_greedy,
+    match_colors_hue_preserving,
 )
 
 # ─── Strategies ──────────────────────────────────────────────────────────────
@@ -34,6 +38,7 @@ C_strategy = st.floats(min_value=0.0, max_value=0.4, allow_nan=False, allow_infi
 H_norm_strategy = st.floats(min_value=0.0, max_value=1.0, allow_nan=False, allow_infinity=False)
 norm_strategy = st.floats(min_value=0.0, max_value=1.0, allow_nan=False, allow_infinity=False)
 warm_strategy = st.integers(min_value=0, max_value=1)
+hue_strategy = st.floats(min_value=0.0, max_value=359.999, allow_nan=False, allow_infinity=False)
 
 
 @st.composite
@@ -86,6 +91,131 @@ def palette_collection(draw) -> list[dict]:
     return [draw(palette_dict()) for _ in range(n)]
 
 
+# ─── Property 1: Circular hue distance is symmetric and bounded [0, 180] ─────
+# Validates: Requirements 1.2, 1.3, 7.1
+
+
+@given(h1=hue_strategy, h2=hue_strategy)
+@settings(max_examples=100)
+def test_circular_hue_distance_symmetric_and_bounded(h1: float, h2: float) -> None:
+    """**Validates: Requirements 1.2, 1.3, 7.1**
+
+    Property 1: circular_hue_distance is symmetric and bounded [0, 180].
+    """
+    d1 = circular_hue_distance(h1, h2)
+    d2 = circular_hue_distance(h2, h1)
+    assert d1 == d2, f"Not symmetric: d({h1},{h2})={d1} != d({h2},{h1})={d2}"
+    assert 0 <= d1 <= 180, f"Out of bounds: d({h1},{h2})={d1}"
+
+
+# ─── Property 2: Circular hue distance wraps correctly at 360° ───────────────
+# Validates: Requirements 1.4, 7.2
+
+offset_strategy = st.floats(min_value=0.0, max_value=180.0, allow_nan=False, allow_infinity=False)
+
+@given(h=hue_strategy, d=offset_strategy)
+@settings(max_examples=100)
+def test_circular_hue_distance_wraps_at_360(h: float, d: float) -> None:
+    """**Validates: Requirements 1.4, 7.2**
+
+    Property 2: For any hue h and offset d ∈ [0, 180],
+    circular_hue_distance(h, (h + d) % 360) ≈ d.
+    """
+    h2 = (h + d) % 360.0
+    result = circular_hue_distance(h, h2)
+    assert abs(result - d) < 1e-9, f"Expected ≈{d}, got {result} for h={h}, d={d}"
+
+
+# ─── Property 3: Hue-preserving matching produces valid bijection ─────────────
+# Validates: Requirements 3.2, 7.3
+
+
+@st.composite
+def oklch_palette(draw) -> list[list[float]]:
+    """Generate a 4-color OKLCH palette with valid [L, C, H] triples."""
+    return [
+        [
+            draw(L_strategy),
+            draw(C_strategy),
+            draw(st.floats(min_value=0.0, max_value=359.999, allow_nan=False, allow_infinity=False)),
+        ]
+        for _ in range(4)
+    ]
+
+
+@given(src=oklch_palette(), tgt=oklch_palette())
+@settings(max_examples=100)
+def test_hue_preserving_matching_bijection(src: list[list[float]], tgt: list[list[float]]) -> None:
+    """**Validates: Requirements 3.2, 7.3**
+
+    Property 3: For any two 4-color OKLCH palettes, match_colors_hue_preserving
+    produces exactly 4 pairs forming a bijection.
+    """
+    matches = match_colors_hue_preserving(src, tgt)
+    assert len(matches) == 4
+    src_indices = [si for si, _ in matches]
+    tgt_indices = [ti for _, ti in matches]
+    assert set(src_indices) == {0, 1, 2, 3}
+    assert set(tgt_indices) == {0, 1, 2, 3}
+    assert len(set(src_indices)) == 4
+    assert len(set(tgt_indices)) == 4
+
+
+# ─── Property 4a: Achromatic fallback uses lightness distance ─────────────────
+# Validates: Requirements 2.3, 7.4
+
+achromatic_chroma = st.floats(min_value=0.0, max_value=0.0099, allow_nan=False, allow_infinity=False)
+
+@given(
+    L1=L_strategy, L2=L_strategy,
+    C1=achromatic_chroma, C2=C_strategy,
+    H1=hue_strategy, H2=hue_strategy,
+)
+@settings(max_examples=100)
+def test_achromatic_fallback_uses_lightness(
+    L1: float, L2: float, C1: float, C2: float, H1: float, H2: float,
+) -> None:
+    """**Validates: Requirements 2.3, 7.4**
+
+    Property 4a: When at least one color is achromatic (chroma < 0.01),
+    hue_preserving_distance returns |L1 - L2| * 180.
+    """
+    src = [L1, C1, H1]
+    tgt = [L2, C2, H2]
+    result = hue_preserving_distance(src, tgt)
+    expected = abs(L1 - L2) * 180.0
+    assert abs(result - expected) < 1e-9, f"Expected {expected}, got {result}"
+
+
+# ─── Property 6: Hue-preserving distance is non-negative and symmetric ───────
+# Validates: Requirements 2.4, 2.5, 7.6
+
+
+@st.composite
+def oklch_color(draw) -> list[float]:
+    """Generate a single valid OKLCH color [L, C, H]."""
+    return [
+        draw(L_strategy),
+        draw(C_strategy),
+        draw(st.floats(min_value=0.0, max_value=359.999, allow_nan=False, allow_infinity=False)),
+    ]
+
+
+@given(a=oklch_color(), b=oklch_color())
+@settings(max_examples=100)
+def test_hue_preserving_distance_nonnegative_and_symmetric(
+    a: list[float], b: list[float],
+) -> None:
+    """**Validates: Requirements 2.4, 2.5, 7.6**
+
+    Property 6: hue_preserving_distance is non-negative and symmetric.
+    """
+    d_ab = hue_preserving_distance(a, b)
+    d_ba = hue_preserving_distance(b, a)
+    assert d_ab >= 0, f"Negative distance: {d_ab}"
+    assert d_ab == d_ba, f"Not symmetric: d(a,b)={d_ab} != d(b,a)={d_ba}"
+
+
 # ─── Property 4: Role_Vector matching produces valid bijection ────────────────
 # Validates: Requirements 3.2
 
@@ -134,24 +264,44 @@ def test_match_colors_greedy_bijection(
 @given(palettes=palette_collection())
 @settings(max_examples=100)
 def test_curriculum_ordering_monotonically_nondecreasing(palettes: list[dict]) -> None:
-    """**Validates: Requirements 3.4**
+    """**Validates: Requirements 4.4, 7.5**
 
     Property 5: For any sequence of generated pairs from generate_pairs_for_split,
-    the average Role_Vector distance is monotonically non-decreasing (similar pairs
-    appear before diverse pairs).
+    the average hue-preserving distance is monotonically non-decreasing (similar
+    hues appear before diverse hue pairs).
     """
-    examples = generate_pairs_for_split(palettes, k_neighbors=min(3, len(palettes) - 1))
+    # Deduplicate palettes by features to ensure unambiguous features→oklch lookup
+    seen_features: set[tuple[tuple[float, ...], ...]] = set()
+    unique_palettes: list[dict] = []
+    for p in palettes:
+        key = tuple(tuple(f) for f in p["features"])
+        if key not in seen_features:
+            seen_features.add(key)
+            unique_palettes.append(p)
+
+    if len(unique_palettes) < 3:
+        return  # Need at least 3 palettes for meaningful pairs
+
+    examples = generate_pairs_for_split(unique_palettes, k_neighbors=min(3, len(unique_palettes) - 1))
 
     if len(examples) < 2:
         return  # Nothing to compare
 
-    # Recompute avg_dist for each example and verify non-decreasing order
+    # Build lookup: tuple of features → oklch (now guaranteed unique)
+    features_to_oklch: dict[tuple[tuple[float, ...], ...], list[list[float]]] = {}
+    for p in unique_palettes:
+        key = tuple(tuple(f) for f in p["features"])
+        features_to_oklch[key] = p["oklch"]
+
+    # Recompute avg hue distance for each example and verify non-decreasing order
     avg_distances = []
     for ex in examples:
-        src_features = ex["src_palette"]
-        tgt_features = ex["tgt_palette"]
-        matches = match_colors_greedy(src_features, tgt_features)
-        avg_dist = average_match_distance(src_features, tgt_features, matches)
+        src_key = tuple(tuple(f) for f in ex["src_palette"])
+        tgt_key = tuple(tuple(f) for f in ex["tgt_palette"])
+        src_oklch = features_to_oklch[src_key]
+        tgt_oklch = features_to_oklch[tgt_key]
+        matches = match_colors_hue_preserving(src_oklch, tgt_oklch)
+        avg_dist = average_hue_match_distance(src_oklch, tgt_oklch, matches)
         avg_distances.append(avg_dist)
 
     for i in range(len(avg_distances) - 1):
@@ -275,3 +425,32 @@ def test_generate_pairs_output_format_matches_schema(tmp_path: Path) -> None:
         assert len(pair["tgt_oklch"]) == 3, (
             f"tgt_oklch should have 3 values, got {len(pair['tgt_oklch'])}"
         )
+
+
+# ─── Unit tests for known hue distance examples (Task 4.1) ───────────────────
+# Validates: Requirements 1.4, 7.7
+
+
+def test_circular_hue_distance_wrapping_example() -> None:
+    """distance(10°, 350°) == 20° (wraps around 360°)."""
+    assert circular_hue_distance(10.0, 350.0) == 20.0
+
+
+def test_circular_hue_distance_maximum_example() -> None:
+    """distance(90°, 270°) == 180° (maximum distance)."""
+    assert circular_hue_distance(90.0, 270.0) == 180.0
+
+
+def test_circular_hue_distance_identity_example() -> None:
+    """distance(45°, 45°) == 0° (identical hues)."""
+    assert circular_hue_distance(45.0, 45.0) == 0.0
+
+
+def test_achromatic_pair_uses_lightness() -> None:
+    """Achromatic pair: distance based on lightness difference × 180."""
+    # Both achromatic (chroma < 0.01)
+    src = [0.3, 0.005, 0.0]
+    tgt = [0.7, 0.008, 90.0]
+    result = hue_preserving_distance(src, tgt)
+    expected = abs(0.3 - 0.7) * 180.0  # 72.0
+    assert abs(result - expected) < 1e-9, f"Expected {expected}, got {result}"

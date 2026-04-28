@@ -52,3 +52,5 @@ Hueswap_Brief.md
 
 # test svg images
 lib/__tests__/fixtures
+
+.env.local

@@ -150,7 +150,7 @@ def load_palettes(path: Path) -> list[dict[str, Any]]:
 def train(
     batch_size: int = 32,
     lr: float = 1e-3,
-    epochs: int = 20,
+    epochs: int = 50,
     log_interval: int = 100,
 ) -> None:
     """Train the PaletteEncoder and save weights to ml/models/encoder.pt.

@@ -97,6 +97,116 @@ def palette_centroid_distance(
     return math.sqrt(sum((x - y) ** 2 for x, y in zip(ca, cb)))
 
 
+# ─── Hue-preserving helpers ──────────────────────────────────────────────────
+
+
+def circular_hue_distance(h1: float, h2: float) -> float:
+    """Compute circular distance between two hue angles in degrees.
+
+    Returns the shortest angular distance on the 360° color wheel,
+    i.e. ``min(|h1 - h2|, 360 - |h1 - h2|)``.
+
+    Args:
+        h1: First hue angle in [0, 360).
+        h2: Second hue angle in [0, 360).
+
+    Returns:
+        Distance in [0, 180].
+    """
+    diff = abs(h1 - h2)
+    return min(diff, 360.0 - diff)
+
+
+def hue_preserving_distance(
+    src_oklch: list[float],
+    tgt_oklch: list[float],
+    achromatic_threshold: float = 0.01,
+) -> float:
+    """Distance metric for hue-preserving matching.
+
+    For chromatic colors (both chroma ≥ threshold): circular hue distance.
+    For achromatic colors (either chroma < threshold): lightness distance
+    scaled to [0, 180] so it is comparable with hue distance.
+
+    Args:
+        src_oklch: Source color as [L, C, H] where L ∈ [0, 1], C ≥ 0, H ∈ [0, 360).
+        tgt_oklch: Target color as [L, C, H] where L ∈ [0, 1], C ≥ 0, H ∈ [0, 360).
+        achromatic_threshold: Chroma below which a color is considered achromatic.
+
+    Returns:
+        Non-negative distance. In [0, 180] for chromatic pairs (hue distance)
+        or achromatic pairs (lightness distance × 180).
+    """
+    src_L, src_C, src_H = src_oklch
+    tgt_L, tgt_C, tgt_H = tgt_oklch
+
+    src_achromatic = src_C < achromatic_threshold
+    tgt_achromatic = tgt_C < achromatic_threshold
+
+    if src_achromatic or tgt_achromatic:
+        return abs(src_L - tgt_L) * 180.0
+
+    return circular_hue_distance(src_H, tgt_H)
+
+
+def match_colors_hue_preserving(
+    src_oklch: list[list[float]], tgt_oklch: list[list[float]]
+) -> list[tuple[int, int]]:
+    """Match source to target colors by greedy hue-preserving distance.
+
+    For each source color (in order), finds the closest unmatched target color
+    by ``hue_preserving_distance``.  Produces a bijection: each source color
+    is matched to exactly one target color and vice versa.
+
+    Args:
+        src_oklch: Source palette as list of [L, C, H] triples (length N).
+        tgt_oklch: Target palette as list of [L, C, H] triples (length N).
+
+    Returns:
+        List of (src_idx, tgt_idx) pairs forming a bijection.
+    """
+    unmatched_tgt = list(range(len(tgt_oklch)))
+    matches: list[tuple[int, int]] = []
+
+    for src_idx in range(len(src_oklch)):
+        best_tgt_idx = min(
+            unmatched_tgt,
+            key=lambda ti: hue_preserving_distance(src_oklch[src_idx], tgt_oklch[ti]),
+        )
+        matches.append((src_idx, best_tgt_idx))
+        unmatched_tgt.remove(best_tgt_idx)
+
+    return matches
+
+
+def average_hue_match_distance(
+    src_oklch: list[list[float]],
+    tgt_oklch: list[list[float]],
+    matches: list[tuple[int, int]],
+) -> float:
+    """Compute average hue-preserving distance across matched pairs.
+
+    Used for curriculum ordering: pairs with lower average hue distance
+    (more similar hues) appear earlier in training.
+
+    Args:
+        src_oklch: Source palette as list of [L, C, H] triples.
+        tgt_oklch: Target palette as list of [L, C, H] triples.
+        matches: List of (src_idx, tgt_idx) pairs from hue-preserving matching.
+
+    Returns:
+        Average ``hue_preserving_distance`` across all matched pairs,
+        or 0.0 if *matches* is empty.
+    """
+    if not matches:
+        return 0.0
+    total = sum(
+        hue_preserving_distance(src_oklch[si], tgt_oklch[ti])
+        for si, ti in matches
+    )
+    return total / len(matches)
+
+
 # ─── Color matching ───────────────────────────────────────────────────────────
 
 
@@ -165,15 +275,17 @@ def generate_pairs_for_split(
 
     For each palette, finds its K nearest neighbors by palette centroid distance,
     then for each (palette_A, palette_B) pair generates 4 training examples
-    (one per color in A matched to a color in B via greedy Role_Vector matching).
-    The resulting examples are sorted by average Role_Vector distance (similar first).
+    (one per color in A matched to a color in B via greedy hue-preserving matching
+    on OKLCH values).
+    The resulting examples are sorted by average hue-preserving distance (similar
+    hues first, diverse hue pairs later).
 
     Args:
         palettes: List of processed palette dicts with 'features' and 'oklch' keys.
         k_neighbors: Number of nearest-neighbor palettes to pair each palette with.
 
     Returns:
-        List of training example dicts sorted by ascending average Role_Vector distance.
+        List of training example dicts sorted by ascending average hue distance.
         Each example has keys: src_palette, tgt_palette, src_color, tgt_oklch.
     """
     n = len(palettes)
@@ -185,6 +297,7 @@ def generate_pairs_for_split(
     for i in range(n):
         src_palette = palettes[i]
         src_features: list[list[float]] = src_palette["features"]
+        src_oklch_colors: list[list[float]] = src_palette["oklch"]
 
         # Find k nearest neighbors by centroid distance
         distances = []
@@ -201,8 +314,8 @@ def generate_pairs_for_split(
             tgt_features: list[list[float]] = tgt_palette["features"]
             tgt_oklch: list[list[float]] = tgt_palette["oklch"]
 
-            matches = match_colors_greedy(src_features, tgt_features)
-            avg_dist = average_match_distance(src_features, tgt_features, matches)
+            matches = match_colors_hue_preserving(src_oklch_colors, tgt_oklch)
+            avg_dist = average_hue_match_distance(src_oklch_colors, tgt_oklch, matches)
 
             for src_idx, tgt_idx in matches:
                 tgt_color_oklch = tgt_oklch[tgt_idx]
@@ -220,7 +333,7 @@ def generate_pairs_for_split(
                 }
                 raw_examples.append((avg_dist, example))
 
-    # Curriculum ordering: sort by average Role_Vector distance (similar first)
+    # Curriculum ordering: sort by average hue-preserving distance (similar hues first)
     raw_examples.sort(key=lambda x: x[0])
     return [ex for _, ex in raw_examples]
 

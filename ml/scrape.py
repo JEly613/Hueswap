@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 HEX_PATTERN = re.compile(r"^#[0-9a-fA-F]{6}$")
 FEED_URL = "https://colorhunt.co/php/feed.php"
 OUTPUT_DIR = Path(__file__).resolve().parent / "data" / "raw"
-TARGET_PALETTES = 500
+TARGET_PALETTES = 5000
 PALETTES_PER_PAGE = 40  # approx items per page from colorhunt
 REQUEST_DELAY = 1.0  # seconds between requests to be polite
 

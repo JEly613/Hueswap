@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import UploadZone from "@/components/UploadZone";
 import PaletteInput from "@/components/PaletteInput";
 import AssignmentReview from "@/components/AssignmentReview";
@@ -138,6 +138,27 @@ export default function Home() {
   const canRecolor =
     svgString && palette.every((h) => /^#[0-9a-fA-F]{6}$/.test(h));
 
+  const svgAspectRatio = useMemo(() => {
+    if (!svgString) return undefined;
+    const vbMatch = svgString.match(/viewBox=["']([^"']+)["']/);
+    if (vbMatch) {
+      const parts = vbMatch[1].trim().split(/[\s,]+/);
+      if (parts.length === 4) {
+        const w = parseFloat(parts[2]);
+        const h = parseFloat(parts[3]);
+        if (w > 0 && h > 0) return w / h;
+      }
+    }
+    const wMatch = svgString.match(/\bwidth=["'](\d+(?:\.\d+)?)(?:px)?["']/);
+    const hMatch = svgString.match(/\bheight=["'](\d+(?:\.\d+)?)(?:px)?["']/);
+    if (wMatch && hMatch) {
+      const w = parseFloat(wMatch[1]);
+      const h = parseFloat(hMatch[1]);
+      if (w > 0 && h > 0) return w / h;
+    }
+    return undefined;
+  }, [svgString]);
+
   return (
     <div className="flex min-h-screen flex-col items-center px-4 py-10 sm:py-16">
       {/* Theme toggle — top right */}
@@ -226,11 +247,16 @@ export default function Home() {
                 <p className="text-[10px] uppercase tracking-wider text-[var(--muted)] mb-3 font-medium">
                   Your SVG
                 </p>
-                <div className="flex items-center justify-center min-h-[120px] rounded-lg bg-[var(--background)] p-3">
+                <div className="flex items-center justify-center rounded-lg bg-[var(--background)] p-3">
                   <div
-                    className="max-w-full max-h-[160px] [&>svg]:max-w-full [&>svg]:max-h-[160px] [&>svg]:w-auto [&>svg]:h-auto"
-                    dangerouslySetInnerHTML={{ __html: svgString }}
-                  />
+                    className="w-full max-w-sm"
+                    style={svgAspectRatio ? { aspectRatio: `${svgAspectRatio}` } : undefined}
+                  >
+                    <div
+                      className="w-full h-full [&>svg]:w-full [&>svg]:h-full [&>svg]:block"
+                      dangerouslySetInnerHTML={{ __html: svgString }}
+                    />
+                  </div>
                 </div>
               </div>
             )}

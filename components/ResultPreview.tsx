@@ -1,10 +1,32 @@
 "use client";
 
+import { useMemo } from "react";
+
 interface ResultPreviewProps {
   originalSvg: string;
   recoloredSvg: string;
   onDownload: () => void;
   onBack: () => void;
+}
+
+function extractAspectRatio(svg: string): number | undefined {
+  const vbMatch = svg.match(/viewBox=["']([^"']+)["']/);
+  if (vbMatch) {
+    const parts = vbMatch[1].trim().split(/[\s,]+/);
+    if (parts.length === 4) {
+      const w = parseFloat(parts[2]);
+      const h = parseFloat(parts[3]);
+      if (w > 0 && h > 0) return w / h;
+    }
+  }
+  const wMatch = svg.match(/\bwidth=["'](\d+(?:\.\d+)?)(?:px)?["']/);
+  const hMatch = svg.match(/\bheight=["'](\d+(?:\.\d+)?)(?:px)?["']/);
+  if (wMatch && hMatch) {
+    const w = parseFloat(wMatch[1]);
+    const h = parseFloat(hMatch[1]);
+    if (w > 0 && h > 0) return w / h;
+  }
+  return undefined;
 }
 
 export default function ResultPreview({
@@ -13,6 +35,8 @@ export default function ResultPreview({
   onDownload,
   onBack,
 }: ResultPreviewProps) {
+  const aspectRatio = useMemo(() => extractAspectRatio(originalSvg), [originalSvg]);
+
   return (
     <div className="w-full">
       <label className="block text-sm font-medium text-[var(--muted)] mb-2 uppercase tracking-wider">
@@ -27,11 +51,16 @@ export default function ResultPreview({
             <p className="text-[10px] uppercase tracking-wider text-[var(--muted)] mb-3 font-medium">
               Original
             </p>
-            <div className="flex items-center justify-center min-h-[180px] rounded-lg bg-[var(--background)] p-4">
+            <div className="flex items-center justify-center rounded-lg bg-[var(--background)] p-4">
               <div
-                className="max-w-full max-h-[200px] [&>svg]:max-w-full [&>svg]:max-h-[200px] [&>svg]:w-auto [&>svg]:h-auto"
-                dangerouslySetInnerHTML={{ __html: originalSvg }}
-              />
+                className="w-full"
+                style={aspectRatio ? { aspectRatio: `${aspectRatio}` } : undefined}
+              >
+                <div
+                  className="w-full h-full [&>svg]:w-full [&>svg]:h-full [&>svg]:block"
+                  dangerouslySetInnerHTML={{ __html: originalSvg }}
+                />
+              </div>
             </div>
           </div>
 
@@ -40,11 +69,16 @@ export default function ResultPreview({
             <p className="text-[10px] uppercase tracking-wider text-[var(--muted)] mb-3 font-medium">
               Recolored
             </p>
-            <div className="flex items-center justify-center min-h-[180px] rounded-lg bg-[var(--background)] p-4">
+            <div className="flex items-center justify-center rounded-lg bg-[var(--background)] p-4">
               <div
-                className="max-w-full max-h-[200px] [&>svg]:max-w-full [&>svg]:max-h-[200px] [&>svg]:w-auto [&>svg]:h-auto"
-                dangerouslySetInnerHTML={{ __html: recoloredSvg }}
-              />
+                className="w-full"
+                style={aspectRatio ? { aspectRatio: `${aspectRatio}` } : undefined}
+              >
+                <div
+                  className="w-full h-full [&>svg]:w-full [&>svg]:h-full [&>svg]:block"
+                  dangerouslySetInnerHTML={{ __html: recoloredSvg }}
+                />
+              </div>
             </div>
           </div>
         </div>

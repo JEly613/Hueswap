@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState, useRef } from "react";
+import { useCallback, useState, useRef, useMemo } from "react";
 
 interface UploadZoneProps {
   onUpload: (svgString: string, fileName: string) => void;
@@ -63,6 +63,27 @@ export default function UploadZone({ onUpload, svgString }: UploadZoneProps) {
     if (inputRef.current) inputRef.current.value = "";
   };
 
+  const aspectRatio = useMemo(() => {
+    if (!svgString) return undefined;
+    const vbMatch = svgString.match(/viewBox=["']([^"']+)["']/);
+    if (vbMatch) {
+      const parts = vbMatch[1].trim().split(/[\s,]+/);
+      if (parts.length === 4) {
+        const w = parseFloat(parts[2]);
+        const h = parseFloat(parts[3]);
+        if (w > 0 && h > 0) return w / h;
+      }
+    }
+    const wMatch = svgString.match(/\bwidth=["'](\d+(?:\.\d+)?)(?:px)?["']/);
+    const hMatch = svgString.match(/\bheight=["'](\d+(?:\.\d+)?)(?:px)?["']/);
+    if (wMatch && hMatch) {
+      const w = parseFloat(wMatch[1]);
+      const h = parseFloat(hMatch[1]);
+      if (w > 0 && h > 0) return w / h;
+    }
+    return undefined;
+  }, [svgString]);
+
   return (
     <div className="w-full">
       <label className="block text-sm font-medium text-[var(--muted)] mb-2 uppercase tracking-wider">
@@ -88,11 +109,16 @@ export default function UploadZone({ onUpload, svgString }: UploadZoneProps) {
         {svgString ? (
           <div className="relative">
             {/* SVG Preview */}
-            <div className="flex items-center justify-center p-6 min-h-[200px]">
+            <div className="flex items-center justify-center p-6">
               <div
-                className="max-w-full max-h-[240px] [&>svg]:max-w-full [&>svg]:max-h-[240px] [&>svg]:w-auto [&>svg]:h-auto"
-                dangerouslySetInnerHTML={{ __html: svgString }}
-              />
+                className="w-full max-w-md"
+                style={aspectRatio ? { aspectRatio: `${aspectRatio}` } : undefined}
+              >
+                <div
+                  className="w-full h-full [&>svg]:w-full [&>svg]:h-full [&>svg]:block"
+                  dangerouslySetInnerHTML={{ __html: svgString }}
+                />
+              </div>
             </div>
             {/* File info bar */}
             <div className="flex items-center justify-between px-4 py-2.5 bg-[var(--surface-hover)] border-t border-[var(--border)]">

@@ -194,9 +194,30 @@ async function mlMapping(
       continue;
     }
 
-    // ML success: use predicted OKLCH as target base
-    const targetBaseOklch = predicted;
-    const targetBaseHex = oklchToHex(predicted);
+    // ML success: use predicted OKLCH to select the closest actual palette color.
+    // The model predicts what the target *should look like* — we snap to the
+    // nearest real palette color so the output always uses the user's palette.
+    let bestIdx = 0;
+    let bestDist = Infinity;
+    for (let i = 0; i < targetColors.length; i++) {
+      const tc = targetColors[i];
+      const dL = predicted.l - tc.l;
+      const dC = predicted.c - tc.c;
+      let dH = predicted.h - tc.h;
+      if (dH > 180) dH -= 360;
+      if (dH < -180) dH += 360;
+      const dist =
+        Math.sqrt(2 * dL * dL + dC * dC + (dH / 360) * (dH / 360)) +
+        (assignedTargets.has(i) ? 0.3 : 0);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestIdx = i;
+      }
+    }
+    assignedTargets.add(bestIdx);
+
+    const targetBaseOklch = targetColors[bestIdx];
+    const targetBaseHex = targetPaletteHexes[bestIdx];
 
     const colorMap = new Map<string, string>();
     colorMap.set(family.base.hex, targetBaseHex);

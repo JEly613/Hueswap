@@ -40,6 +40,8 @@ export default function Home() {
   const [palette, setPalette] = useState<string[]>(DEFAULT_PALETTE);
   const [families, setFamilies] = useState<FamilyMapping[]>([]);
   const [recoloredSvg, setRecoloredSvg] = useState<string>("");
+  const [alternativeSvg, setAlternativeSvg] = useState<string | null>(null);
+  const [activeVariant, setActiveVariant] = useState<"primary" | "alternative">("primary");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -92,6 +94,8 @@ export default function Home() {
       );
       setPalette(paletteToUse);
       setRecoloredSvg(data.recoloredSvg);
+      setAlternativeSvg(data.alternativeSvg ?? null);
+      setActiveVariant("primary");
       setAppState("editor");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
@@ -126,6 +130,8 @@ export default function Home() {
           )
         );
         setRecoloredSvg(data.recoloredSvg);
+        setAlternativeSvg(data.alternativeSvg ?? null);
+        setActiveVariant("primary");
       } catch (err) {
         setError(err instanceof Error ? err.message : "Something went wrong");
       } finally {
@@ -135,8 +141,11 @@ export default function Home() {
   }, [svgString, appState]);
 
   const handleDownload = useCallback(() => {
-    if (!recoloredSvg) return;
-    const blob = new Blob([recoloredSvg], { type: "image/svg+xml" });
+    const svgToDownload = activeVariant === "alternative" && alternativeSvg
+      ? alternativeSvg
+      : recoloredSvg;
+    if (!svgToDownload) return;
+    const blob = new Blob([svgToDownload], { type: "image/svg+xml" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -145,7 +154,7 @@ export default function Home() {
       : "recolored.svg";
     a.click();
     URL.revokeObjectURL(url);
-  }, [recoloredSvg, fileName]);
+  }, [recoloredSvg, alternativeSvg, activeVariant, fileName]);
 
   const handleStartOver = useCallback(() => {
     setAppState("landing");
@@ -153,6 +162,8 @@ export default function Home() {
     setFileName("");
     setFamilies([]);
     setRecoloredSvg("");
+    setAlternativeSvg(null);
+    setActiveVariant("primary");
     setError(null);
   }, []);
 
@@ -302,6 +313,9 @@ export default function Home() {
           <ResultPreview
             originalSvg={svgString || ""}
             recoloredSvg={recoloredSvg}
+            alternativeSvg={alternativeSvg}
+            activeVariant={activeVariant}
+            onSelectVariant={setActiveVariant}
             isLoading={isLoading}
           />
         </div>
